@@ -13,19 +13,33 @@ Change the path after `jdbc:sqlite:` to use another database file. The parent
 directory is created when the application starts. Database operations run
 asynchronously on a single managed executor so SQLite writes are serialized.
 
-The repository creates this schema at startup:
+The repository creates these tables at startup:
 
 ```sql
+CREATE TABLE IF NOT EXISTS agency (
+	agency_Id INTEGER PRIMARY KEY,
+	name TEXT NOT NULL UNIQUE
+);
+
 CREATE TABLE IF NOT EXISTS vehicles (
 	vehicle_id TEXT PRIMARY KEY,
-	agency_id INTEGER NOT NULL,
+	agency_id INTEGER NOT NULL REFERENCES agency(agency_Id),
 	name TEXT NOT NULL,
 	vehicle_type TEXT NOT NULL,
 	seating_capacity INTEGER NOT NULL
 );
 ```
 
-The initial rows are inserted with `INSERT OR IGNORE`:
+The initial agencies are inserted with `INSERT OR IGNORE`:
+
+```sql
+INSERT OR IGNORE INTO agency (agency_Id, name) VALUES
+	(1, 'Boston'),
+	(2, 'NYC'),
+	(3, 'Washington D.C.');
+```
+
+The initial vehicles are inserted with `INSERT OR IGNORE`:
 
 ```sql
 INSERT OR IGNORE INTO vehicles
@@ -44,3 +58,4 @@ VALUES
 - `DELETE /api/v1/vehicles/{vehicleId}` deletes a vehicle.
 
 PUT and DELETE return `404 Not Found` when the vehicle ID does not exist.
+Vehicle responses include both `agencyId` and the joined Agency table value as `agencyName`.

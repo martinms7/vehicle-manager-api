@@ -20,6 +20,12 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public class VehicleRepository {
+    private static final String CREATE_AGENCY_TABLE_SQL = """
+            CREATE TABLE IF NOT EXISTS agency (
+                agency_Id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE
+            )
+            """;
     private static final String CREATE_TABLE_SQL = """
             CREATE TABLE IF NOT EXISTS vehicles (
                 vehicle_id TEXT PRIMARY KEY,
@@ -34,6 +40,8 @@ public class VehicleRepository {
                 (vehicle_id, agency_id, name, vehicle_type, seating_capacity)
             VALUES (?, ?, ?, ?, ?)
             """;
+    private static final String SELECT_COLUMNS = "v.vehicle_id, v.agency_id, v.name, "
+            + "v.vehicle_type, v.seating_capacity, a.name AS agency_name";
 
     private final String databaseUrl;
     private final ExecutorService databaseExecutor = Executors.newSingleThreadExecutor();
@@ -48,8 +56,9 @@ public class VehicleRepository {
     public CompletableFuture<ArrayList<VehicleDto>> getVehicles(int agencyId) {
         return submit(() -> {
             ArrayList<VehicleDto> vehicles = new ArrayList<>();
-            String sql = "SELECT vehicle_id, agency_id, name, vehicle_type, seating_capacity "
-                    + "FROM vehicles WHERE agency_id = ? ORDER BY vehicle_id";
+                String sql = "SELECT " + SELECT_COLUMNS + " FROM vehicles v "
+                    + "INNER JOIN agency a ON v.agency_id = a.agency_Id "
+                    + "WHERE v.agency_id = ? ORDER BY v.vehicle_id";
             try (Connection connection = connection();
                     PreparedStatement statement = connection.prepareStatement(sql)) {
                 statement.setInt(1, agencyId);
@@ -68,6 +77,7 @@ public class VehicleRepository {
     /** Asynchronously inserts a vehicle and returns all stored vehicles. */
     public CompletableFuture<ArrayList<VehicleDto>> addVehicle(VehicleDto vehicle) {
         return submit(() -> {
+            ensureAgencyExists(vehicle.getAgencyId());
             try (Connection connection = connection();
                     PreparedStatement statement = connection.prepareStatement(INSERT_SQL)) {
                 bindVehicle(statement, vehicle);
@@ -82,6 +92,7 @@ public class VehicleRepository {
     /** Asynchronously updates a vehicle by ID and returns all stored vehicles. */
     public CompletableFuture<ArrayList<VehicleDto>> updateVehicle(String vehicleId, VehicleDto vehicle) {
         return submit(() -> {
+            ensureAgencyExists(vehicle.getAgencyId());
             String sql = "UPDATE vehicles SET agency_id = ?, name = ?, vehicle_type = ?, "
                     + "seating_capacity = ? WHERE vehicle_id = ?";
             try (Connection connection = connection();
@@ -129,8 +140,13 @@ public class VehicleRepository {
             try {
                 createDatabaseDirectory();
                 try (Connection connection = connection();
-                        PreparedStatement createTable = connection.prepareStatement(CREATE_TABLE_SQL)) {
-                    createTable.executeUpdate();
+                        PreparedStatement createAgencyTable = connection.prepareStatement(CREATE_AGENCY_TABLE_SQL);
+                        PreparedStatement createVehicleTable = connection.prepareStatement(CREATE_TABLE_SQL)) {
+                    createAgencyTable.executeUpdate();
+                    seedAgency(connection, 1, "Boston");
+                    seedAgency(connection, 2, "NYC");
+                    seedAgency(connection, 3, "Washington D.C.");
+                    createVehicleTable.executeUpdate();
                     seed(connection, 1, "bos-303", "Boston 303", VehicleTypes.FERRY.getVehicleType(), 1);
                     seed(connection, 1, "bos-304", "Boston 304", VehicleTypes.STREETCAR.getVehicleType(), 90);
                     seed(connection, 1, "bos-305", "Boston 305", VehicleTypes.TRAIN.getVehicleType(), 250);
@@ -165,11 +181,22 @@ public class VehicleRepository {
         }
     }
 
-    // Reads every vehicle from the database in ID order.
+    // Inserts one agency without duplicating an existing ID.
+    private void seedAgency(Connection connection, int agencyId, String name) throws SQLException {
+        String sql = "INSERT OR IGNORE INTO agency (agency_Id, name) VALUES (?, ?)";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, agencyId);
+            statement.setString(2, name);
+            statement.executeUpdate();
+        }
+    }
+
+    // Reads every vehicle from the database in ID order. This is not ideal at scale.
+    // All returns should be restricted by agencyId and full-stack logic should reflect this (later improvement)
     private ArrayList<VehicleDto> getAllVehicles() {
         ArrayList<VehicleDto> vehicles = new ArrayList<>();
-        String sql = "SELECT vehicle_id, agency_id, name, vehicle_type, seating_capacity "
-                + "FROM vehicles ORDER BY vehicle_id";
+        String sql = "SELECT " + SELECT_COLUMNS + " FROM vehicles v "
+            + "INNER JOIN agency a ON v.agency_id = a.agency_Id ORDER BY v.vehicle_id";
         try (Connection connection = connection();
                 PreparedStatement statement = connection.prepareStatement(sql);
                 ResultSet results = statement.executeQuery()) {
@@ -198,9 +225,26 @@ public class VehicleRepository {
 
     // Maps the current result-set row to a vehicle DTO.
     private VehicleDto toVehicle(ResultSet results) throws SQLException {
-        return new VehicleDto(results.getInt("agency_id"), results.getString("vehicle_id"),
+        return new VehicleDto(results.getInt("agency_id"), results.getString("agency_name"),
+                results.getString("vehicle_id"),
                 results.getString("name"), results.getString("vehicle_type"),
                 results.getInt("seating_capacity"));
+    }
+
+    // Ensures a vehicle references an existing agency before writing it.
+    private void ensureAgencyExists(int agencyId) {
+        String sql = "SELECT 1 FROM agency WHERE agency_Id = ?";
+        try (Connection connection = connection();
+                PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, agencyId);
+            try (ResultSet results = statement.executeQuery()) {
+                if (!results.next()) {
+                    throw new AgencyNotFoundException(agencyId);
+                }
+            }
+        } catch (SQLException exception) {
+            throw new DatabaseException("Unable to validate agency", exception);
+        }
     }
 
     /** Stops the database executor when the application shuts down. */
@@ -212,6 +256,12 @@ public class VehicleRepository {
     public static class VehicleNotFoundException extends RuntimeException {
         public VehicleNotFoundException(String vehicleId) {
             super("Vehicle not found: " + vehicleId);
+        }
+    }
+
+    public static class AgencyNotFoundException extends RuntimeException {
+        public AgencyNotFoundException(int agencyId) {
+            super("Agency not found: " + agencyId);
         }
     }
 

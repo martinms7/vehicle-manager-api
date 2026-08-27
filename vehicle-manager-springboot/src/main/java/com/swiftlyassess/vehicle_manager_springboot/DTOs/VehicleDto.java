@@ -13,6 +13,7 @@ public class VehicleDto {
     private String name;
     private String vehicleType;
     private int agencyId;
+    private String agencyName;
     private int seatingCapacity;
 
     public VehicleDto(){
@@ -27,6 +28,12 @@ public class VehicleDto {
         this.name = name;
         this.vehicleType = vehicleType;
         this.seatingCapacity = seatingCapacity;
+    }
+
+    public VehicleDto(int agencyId, String agencyName, String vehicleId, String name,
+            String vehicleType, int seatingCapacity) {
+        this(agencyId, vehicleId, name, vehicleType, seatingCapacity);
+        this.agencyName = agencyName;
     }
     
     
@@ -47,6 +54,10 @@ public class VehicleDto {
         this.agencyId = agencyId;
     }
 
+    public void setAgencyName(String agencyName) {
+        this.agencyName = agencyName;
+    }
+
     public void setSeatingCapacity(int seatingCapacity) {
         this.seatingCapacity = seatingCapacity;
     }
@@ -65,6 +76,10 @@ public class VehicleDto {
 
     public int getAgencyId() {
         return agencyId;
+    }
+
+    public String getAgencyName() {
+        return agencyName;
     }
 
     public int getSeatingCapacity() {
